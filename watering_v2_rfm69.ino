@@ -16,12 +16,13 @@
 
 #include <MySensors.h> 
 #include <avr/wdt.h>
-#include <TimeLib.h> 
 #include <SPI.h>
 #include <I2CSoilMoistureSensor.h>
 #include <Wire.h>
+#include "RTClib.h"
 
 I2CSoilMoistureSensor sensor;
+RTC_DS3231 rtc;
 
 #define LED_POWERUP_COUNT 6
 #define LED_DELAY 200
@@ -96,9 +97,10 @@ int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100
 
 boolean ack = true;
 boolean metric, timeReceived = false; 
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+DateTime now;
 
 unsigned long cicles=0;
-
 
 //Mysensors Messages initialization
 MyMessage message;
@@ -115,7 +117,7 @@ void before()
   //_radio.setPowerLevel(30);
   
   //Setup pin modes for proper operation
-  pinMode(SOILVCCPIN, OUTPUT);
+  pinMode(SOILVCCPIN, INPUT);
   //blink LED on power up
   pinMode(13,OUTPUT);
   for (i = 0 ; i<LED_POWERUP_COUNT ;i++) {
@@ -125,6 +127,11 @@ void before()
     digitalWrite (13, LOW);
     delay(LED_DELAY);
     delay(LED_DELAY);
+  }
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
   }
 
   Serial.println(F("initialing battery voltage"));
@@ -149,7 +156,7 @@ void before()
 }
 
 void setup()  
-{ 
+{
   Serial.println("");
   //activate watchdog timer
   wdt_enable(WDTO_8S);
@@ -159,20 +166,25 @@ void setup()
   Serial.print(F("Metric: "));
   Serial.println(metric);
 
-  i=0;
-  while (timeReceived != true) {
-    Serial.println(F("Requesting Time"));
-    //request time
-    requestTime(); 
-    heartbeat();
-    wait(5000);
-    if (i>4) {
-      break;
-    } else {
-      i++;
-    }
-  }  
-  PrintTime ();
+  if (rtc.lostPower()) {
+    Serial.println(F("RTC lost power, requesting time!"));
+    i=0;
+    while (timeReceived != true) {
+      Serial.println(F("Requesting Time"));
+      //request time
+      requestTime(); 
+      heartbeat ();
+      wait(5000);
+      if (i>4) {
+        break;
+      } else {
+        i++;
+      }
+    }  
+  }
+  Serial.println(F("Syncing Time"));
+  now = rtc.now();
+  PrintTime (); 
 } 
 
 void presentation ()
@@ -182,31 +194,16 @@ void presentation ()
 
 void loop() 
 {
+  now = rtc.now();
+  
   heartbeat();
   //check if it should reboot itself
-  if ((hour() == 2) && (cicles > 12)) {
+  if ((now.hour() == 2) && (cicles > 12)) {
     Serial.println(F("Reboot hour reached (2)"));
     asm volatile ( "jmp 0");
     wait(100);
   }
 
-  if (cicles % CICLES_PER_TIMEUPDATE == 23) {
-    timeReceived = false;
-    i=0;
-    while (timeReceived != true) {
-      //request time
-      requestTime(); 
-      heartbeat();
-      wait(2000);
-      PrintTime ();
-      if (i>4) {
-        break;
-      } else {
-        i++;
-      }
-    }
-  }  
-  
   readSoil ();
   readSolar();  
   readBattery();
@@ -223,6 +220,7 @@ void loop()
 void wake_sensors () {
   //Wake the soil sensor
   Serial.println(F("waking sensor"));
+  pinMode(SOILVCCPIN, OUTPUT);
   digitalWrite (SOILVCCPIN, HIGH);
   sleep(100);
   sensor.begin(); // reset sensor
@@ -232,7 +230,7 @@ void wake_sensors () {
 void sleep_sensors () {
   //Sleep the temperature sensor
   Serial.println(F("Sleeping sensor"));
-  digitalWrite (SOILVCCPIN, LOW);
+  pinMode(SOILVCCPIN, INPUT);
 }
 
 void readRadioTemp () {
@@ -310,21 +308,22 @@ void readBattery () {
 }
 
 void PrintTime () {
-  //display current time
-  Serial.print(F("Current date: "));
-  Serial.print(dayStr(weekday()));
-  Serial.print(F(" "));
-  Serial.print(day());
-  Serial.print(F("/"));
-  Serial.print(monthStr(month()));
-  Serial.print(F("/"));
-  Serial.println(year()); 
-  Serial.print(F("Current time: "));
-  Serial.print(hour());
-  Serial.print(F(":"));
-  Serial.print(minute());
-  Serial.print(F(":"));
-  Serial.println(second());
+  now = rtc.now();
+
+  Serial.print(now.year(), DEC);
+  Serial.print('/');
+  Serial.print(now.month(), DEC);
+  Serial.print('/');
+  Serial.print(now.day(), DEC);
+  Serial.print(" (");
+  Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+  Serial.print(") ");
+  Serial.print(now.hour(), DEC);
+  Serial.print(':');
+  Serial.print(now.minute(), DEC);
+  Serial.print(':');
+  Serial.print(now.second(), DEC);
+  Serial.println();
 }
 
 // Reads Battery voltage while averaging the last value
@@ -505,7 +504,7 @@ void receive (const MyMessage &message) {
 }
 
 void receiveTime(unsigned long time) {
-  setTime(time);
+  rtc.adjust(time);
   timeReceived = true;
 }
 
@@ -525,7 +524,7 @@ void heartbeat () {
   wdt_reset();
   pinMode(PULSEPIN, OUTPUT);
   digitalWrite(PULSEPIN, LOW);
-  wait(10);
+  wait(1);
   // Return to high-Z
   pinMode(PULSEPIN, INPUT);
 }
