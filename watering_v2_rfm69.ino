@@ -51,8 +51,8 @@ RTC_DS3231 rtc;
 #define SOLAR_CALC 0.0117397661
 
 #define BATTERY_READS 10
-#define BATTERY_SENSE A2
-#define SOLAR_SENSE A3
+#define BATTERY_SENSE A3
+#define SOLAR_SENSE A0
 
 //External Watchdog heartbeat
 #define PULSEPIN A1
@@ -74,10 +74,9 @@ RTC_DS3231 rtc;
 #define BAUD_RATE 115200
 
 //Cycles in between updates
-#define SECONDS_PER_CICLE 300
+#define SECONDS_PER_CICLE 30
 #define CICLES_PER_PRESENT 2880
-#define CICLES_PER_UPDATE 1
-#define CICLES_PER_TIMEUPDATE 24
+#define CICLES_PER_UPDATE 10
 
 //Transmit Retries
 #define HIGH_PRIORITY_RETRIES 10
@@ -145,7 +144,7 @@ void before()
     Serial.print((float)Battarray[i] * BATT_CALC);
   }
   Serial.println(F(""));
-  Serial.print(F("Battery average"));
+  Serial.print(F("Battery average "));
   Serial.print((float)BattarrayTotal/BATTERY_READS * BATT_CALC);
   Serial.println(F(""));
 
@@ -182,7 +181,7 @@ void setup()
       }
     }  
   }
-  Serial.println(F("Syncing Time"));
+  Serial.println(F("Reading Time ftom RTC"));
   now = rtc.now();
   PrintTime (); 
 } 
@@ -241,8 +240,6 @@ void readSoil () {
   // power up sensor
   wake_sensors ();
 
-  Serial.print(F("Metric:"));
-  Serial.print(metric);
   Serial.print("Soil Moisture Capacitance: ");
   rawSensor = sensor.getCapacitance();
   SoilHum = map(rawSensor, dryValue, wetValue, friendlyDryValue, friendlyWetValue);
@@ -331,29 +328,38 @@ void readSolar () {
   Serial.println(F("Reading Solar Voltage"));
   //primes the analog converter
   analogRead(SOLAR_SENSE);
-  Serial.print(F("Solar analog "));
-  Serial.println(BattValue);
-  wait(5);
   analogRead(SOLAR_SENSE);
   analogRead(SOLAR_SENSE);
   //Reads battery voltage
   BattValue = analogRead(SOLAR_SENSE);
-  Serial.print(F("Solar analog "));
-  Serial.println(BattValue);
   //adds the current reading
   BattValue = (BattValue + analogRead(SOLAR_SENSE)) / 2;
-
   Serial.print(F("Solar analog Average "));
   Serial.println(BattValue);
-
+  
   Sbatt = (float)BattValue * SOLAR_CALC;
-
-  //print battery status
+  
+  //print Solar status
   Serial.print(F("Solar voltage: "));
   Serial.println(Sbatt, 3);
 }
 
 void sendValues () {
+
+  Serial.print(F("Soil Water Content "));
+  Serial.println (SoilHum);
+  Serial.print(F(" Temperature "));
+  Serial.print(temperature,3); 
+  Serial.print(F(" Radio Temperature "));
+  Serial.print(radioTemperature);
+  Serial.print(F(" Radio RSSI "));
+  Serial.println(radioRSSI);
+  Serial.print(F("Battery Voltage "));
+  Serial.print(Vbatt,3); 
+  Serial.print(F(" Solar Voltage "));
+  Serial.println(Sbatt,3);
+
+  
   //only sends values if they have changed or if it didn't send for 12 cycles (1 hour)
   if (nosend < CICLES_PER_UPDATE) {
     nosend++;
@@ -364,30 +370,12 @@ void sendValues () {
 
   //print debug message
   Serial.println(F("Sending Values"));
-
-  Serial.print(F("Soil Water Content "));
-  Serial.println(SoilHum,0);
   resend(message.setSensor(SOIL_ID).setType(V_LEVEL).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
-    
-  Serial.print(F("Temperature "));
-  Serial.println(temperature,3);
   resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
- 
-  Serial.print(F("Battery Voltage "));
-  Serial.println(Vbatt,3);
   resend(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  
-  Serial.print(F("Solar Voltage "));
-  Serial.println(Sbatt,3);
   resend(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   sendBatteryLevel(Batt, ack);
-
-  Serial.print(F("Radio Temperature "));
-  Serial.println(radioRSSI);
   resend(message.setSensor(RADIOTEMP_ID).setType(V_TEMP).set(radioTemperature,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  
-  Serial.print(F("Radio RSSI "));
-  Serial.println(radioRSSI);
   resend(message.setSensor(RSSI_ID).setType(V_VOLTAGE).set(radioRSSI,0),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
 }
 
@@ -505,6 +493,7 @@ void receive (const MyMessage &message) {
 
 void receiveTime(unsigned long time) {
   rtc.adjust(time);
+  Serial.println(F("Time Received, RTC updated"));
   timeReceived = true;
 }
 
