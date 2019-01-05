@@ -5,7 +5,7 @@
  */
 
 // Enable debug prints to serial monitor
-//#define MY_DEBUG 
+#define MY_DEBUG 
 
 // Enable and select radio type attached
 //#define MY_RADIO_NRF24
@@ -44,10 +44,10 @@ RTC_DS3231 rtc;
 #define RSSI_ID 5
 
 //for 1xli-ion
-#define VMIN 3.5
-#define VMAX 4.1  
+#define VMIN 3.4
+#define VMAX 4.0  
 #define VDELTA 0.6
-#define BATT_CALC 0.0061070412
+#define BATT_CALC 0.01172352941
 #define SOLAR_CALC 0.0117397661
 
 #define BATTERY_READS 10
@@ -55,7 +55,7 @@ RTC_DS3231 rtc;
 #define SOLAR_SENSE A0
 
 //External Watchdog heartbeat
-#define PULSEPIN A1
+#define PULSEPIN 3
 
 //Soil Sensor VCC pin
 #define SOILVCCPIN 4
@@ -203,11 +203,20 @@ void loop()
     wait(100);
   }
 
-  readSoil ();
-  readSolar();  
-  readBattery();
-  readRadioTemp();
-  sendValues();
+
+  //only reads values if they have changed or if it didn't send for CICLES_PER_UPDATE
+  if (nosend < CICLES_PER_UPDATE) {
+    nosend++;
+  } else {
+    //reset count;
+    nosend = 1;
+  
+    readSoil ();
+    readSolar();  
+    readBattery();
+    readRadioTemp();
+    sendValues();
+  }
 
   cicles++;
   Serial.print(F("Waiting in cicle "));
@@ -359,18 +368,9 @@ void sendValues () {
   Serial.print(F(" Solar Voltage "));
   Serial.println(Sbatt,3);
 
-  
-  //only sends values if they have changed or if it didn't send for 12 cycles (1 hour)
-  if (nosend < CICLES_PER_UPDATE) {
-    nosend++;
-    return;
-  }
-  //reset count;
-  nosend = 1;
-
   //print debug message
   Serial.println(F("Sending Values"));
-  resend(message.setSensor(SOIL_ID).setType(V_LEVEL).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  resend(message.setSensor(SOIL_ID).setType(V_HUM).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
@@ -392,7 +392,7 @@ void gwPresent () {
   sendSketchInfo(SKETCH_INFO, SKETCH_VERSION);
   wait(1000);
   heartbeat();
-  present(SOIL_ID, S_MOISTURE, SOIL_ID_INFO);
+  present(SOIL_ID, S_HUM, SOIL_ID_INFO);
   wait(1000);
   heartbeat();
   present(TEMP_ID, S_TEMP, TEMP_ID_INFO);
@@ -501,11 +501,13 @@ void wdsleep(unsigned long ms) {
   unsigned long enter = hwMillis();
   #if defined(MY_REPEATER_FEATURE)
   while (hwMillis() - enter < ms) {
-    wait(90);
+    wait(98);
     heartbeat();
   }
   #else
-    smartSleep(ms);
+    heartbeat();
+    sleep(ms, true);
+    heartbeat();
   #endif
 }
 
