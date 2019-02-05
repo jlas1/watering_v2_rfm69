@@ -6,6 +6,7 @@
 
 // Enable debug prints to serial monitor
 #define MY_DEBUG 
+#define MY_SMART_SLEEP_WAIT_DURATION_MS 2500
 
 // Enable and select radio type attached
 //#define MY_RADIO_NRF24
@@ -42,6 +43,12 @@ RTC_DS3231 rtc;
 #define RADIOTEMP_ID 4
 #define RSSI_ID_INFO      "Radio RSSI"
 #define RSSI_ID 5
+#define WATERING_ID_INFO  "Watering Time"
+#define WATERING_ID 6
+#define DURATION_ID_INFO  "Watering Duration"
+#define DURATION_ID 7
+#define MANUAL_ID_INFO    "Manual Start"
+#define MANUAL_ID 8
 
 //for 1xli-ion
 #define VMIN 3.4
@@ -56,9 +63,14 @@ RTC_DS3231 rtc;
 
 //External Watchdog heartbeat
 #define PULSEPIN 3
-
 //Soil Sensor VCC pin
 #define SOILVCCPIN 4
+//Enable Driver pin
+#define DRIVERPIN 6
+//Set pin
+#define SETPIN 7
+//Unset pin
+#define UNSETPIN 8
 
 //Auto-reset
 #define MESSAGES_FAILED_REBOOT 20
@@ -88,7 +100,7 @@ float Sbatt, Vbatt, CurrValue, current;
 unsigned int BattValue, Batt, Battarray[BATTERY_READS], Battindex = 0, BattarrayTotal = 0;
 int radioRSSIarray[RSSI_READS], radioRSSIindex=0,radioRSSIarrayTotal=0,messagesFailed=0;
 int SoilHum;
-volatile int radioRSSI, isACKed = false;
+volatile int radioRSSI, isACKed = false, Manual_request = false;
 unsigned int nosend = CICLES_PER_UPDATE, i;
 unsigned int topresent = CICLES_PER_PRESENT;
 
@@ -96,6 +108,8 @@ int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100
 
 boolean ack = true;
 boolean metric, timeReceived = false; 
+volatile char StartTime[MAX_MESSAGE_LENGTH];
+volatile char WaterTime[MAX_MESSAGE_LENGTH];
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
 DateTime now;
 
@@ -109,6 +123,12 @@ void before()
   //disable watchdog timer
   MCUSR = 0;
   pinMode(PULSEPIN, INPUT);
+  pinMode(DRIVERPIN, OUTPUT);
+  digitalWrite(DRIVERPIN, LOW);
+  pinMode(SETPIN, OUTPUT);
+  digitalWrite(SETPIN, LOW);
+  pinMode(UNSETPIN, OUTPUT);
+  digitalWrite(UNSETPIN, LOW);
   Serial.begin(BAUD_RATE);
   Serial.println(F("begin"));
 
@@ -203,8 +223,10 @@ void loop()
     wait(100);
   }
 
+  //process water logic
+  checkWatering ();
 
-  //only reads values if they have changed or if it didn't send for CICLES_PER_UPDATE
+  //only reads values if we didn't send for CICLES_PER_UPDATE CICLES
   if (nosend < CICLES_PER_UPDATE) {
     nosend++;
   } else {
@@ -224,6 +246,18 @@ void loop()
   Serial.println(cicles);
   wdsleep(SECONDS_PER_CICLE*1000);
 } 
+
+void checkWatering () {
+  if (Manual_request == true) {
+    Manual_request = false;
+    Serial.println(F("Starting 12v driver"));
+    digitalWrite (DRIVERPIN, HIGH);
+    wait (2000);
+    Serial.println(F("Stopping 12v driver"));
+    digitalWrite (DRIVERPIN, LOW);
+  }
+}
+
 
 void wake_sensors () {
   //Wake the soil sensor
@@ -410,6 +444,16 @@ void gwPresent () {
   present(RSSI_ID, S_MULTIMETER, RSSI_ID_INFO);
   wait(1000);
   heartbeat();
+ present(WATERING_ID, S_INFO, WATERING_ID_INFO);
+  wait(1000);
+  heartbeat();
+ present(DURATION_ID, S_INFO, DURATION_ID_INFO);
+  wait(1000);
+  heartbeat();  
+ present(MANUAL_ID, S_DOOR, MANUAL_ID_INFO);
+  wait(1000);
+  heartbeat();  
+
 }
 
 
@@ -484,6 +528,14 @@ void receive (const MyMessage &message) {
     Serial.println(_radio.RSSI);
     isACKed = true;
   } else {
+    if (message.sensor == WATERING_ID) {
+      strncpy(StartTime, message.data, MAX_MESSAGE_LENGTH);
+    } else if (message.sensor == DURATION_ID) {
+      strncpy(WaterTime, message.data, MAX_MESSAGE_LENGTH);
+    } else if ((message.sensor == MANUAL_ID) && (message.getBool() == true)) {
+      Manual_request = true;
+      Serial.println(F("Received manual water start"));
+    }
     Serial.print(F("Incoming change for sensor:"));
     Serial.print(message.sensor);
     Serial.print(F(" RSSI "));
@@ -506,8 +558,14 @@ void wdsleep(unsigned long ms) {
   }
   #else
     heartbeat();
-    sleep(ms, true);
-    heartbeat();
+    if (ms > MY_SMART_SLEEP_WAIT_DURATION_MS) {
+      ms-=MY_SMART_SLEEP_WAIT_DURATION_MS;
+      smartSleep(ms);
+      heartbeat();
+    } else {
+      wait (ms);
+      heartbeat();
+    }
   #endif
 }
 
