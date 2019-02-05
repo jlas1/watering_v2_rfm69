@@ -561,6 +561,8 @@ void wdsleep(unsigned long ms) {
     if (ms > MY_SMART_SLEEP_WAIT_DURATION_MS) {
       ms-=MY_SMART_SLEEP_WAIT_DURATION_MS;
       smartSleep(ms);
+      Serial.println(F("Ending sleep"));
+      //wait(ms);
       heartbeat();
     } else {
       wait (ms);
