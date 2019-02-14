@@ -150,11 +150,6 @@ void before()
     delay(LED_DELAY);
   }
 
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    while (1);
-  }
-
   Serial.println(F("initialing battery voltage"));
   analogReference(INTERNAL);
   analogRead(BATTERY_SENSE);
@@ -173,6 +168,18 @@ void before()
   Serial.println(F("initialing RSSI array"));
   for (i = 0; i < RSSI_READS; i++) {
     radioRSSIarray[i] = 0;
+  }
+
+  StartDriver();
+  Serial.println(F("Unset Water Relay"));
+  digitalWrite (UNSETPIN, HIGH);
+  wait (400);
+  digitalWrite (UNSETPIN, LOW);
+  StopDriver();
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
   }
 }
 
@@ -216,7 +223,6 @@ void setup()
 
   //configures water unset
   water_unset = now;
-  WaterStop();  
 } 
 
 void presentation ()
@@ -226,10 +232,9 @@ void presentation ()
 
 void loop() 
 {
-  if (cicles > 0) {
-    //after first loop, request for commands queuing during sleep
-    smartSleep(2000);
-  }
+  //request for commands queuing during sleep
+  smartSleep(2000);
+
   now = rtc.now();
   
   heartbeat();
@@ -401,11 +406,7 @@ void readSoil () {
   Serial.print("Soil Moisture Capacitance: ");
   rawSensor = sensor.getCapacitance();
   rawSensor = sensor.getCapacitance();
-  if (sensor.getVersion() == 0) { 
-    SoilHum = map(rawSensor, dryValue, wetValue, friendlyDryValue, friendlyWetValue);
-  } else {
-    SoilHum=0;
-  }
+  SoilHum = map(rawSensor, dryValue, wetValue, friendlyDryValue, friendlyWetValue);
   Serial.print(rawSensor);
   Serial.print(" Soil Moisture Percentage: ");
   Serial.print(SoilHum);
@@ -523,10 +524,8 @@ void sendValues () {
 
   //print debug message
   Serial.println(F("Sending Values"));
-  if (SoilHum < 0 ) { //Sensor disconnected, do not send
-    resend(message.setSensor(SOIL_ID).setType(V_HUM).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
-    resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  }
+  resend(message.setSensor(SOIL_ID).setType(V_HUM).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   sendBatteryLevel(Batt, ack);
@@ -691,9 +690,14 @@ void receive (const MyMessage &message) {
       } else {
         Serial.println(F("Received incorrect watering duration format"));
       }
-    } else if ((message.sensor == MANUAL_ID) && (message.getBool() == true)) {
-      Manual_request = true;
-      Serial.println(F("Received manual water start"));
+    } else if (message.sensor == MANUAL_ID) {
+      if (message.getBool() == true) {
+        Manual_request = true;
+        Serial.println(F("Received manual water start"));
+      } else {
+        water_unset = now;
+        Serial.println(F("Received manual water stop"));
+      }
     }
     Serial.print(F("Incoming change for sensor:"));
     Serial.print(message.sensor);
