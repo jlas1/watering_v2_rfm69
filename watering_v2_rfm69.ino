@@ -26,6 +26,7 @@
 
 I2CSoilMoistureSensor sensor;
 RTC_DS3231 rtc;
+#define HAS_RTC false
 
 #define LED_POWERUP_COUNT 6
 #define LED_DELAY 200
@@ -56,15 +57,26 @@ RTC_DS3231 rtc;
 #define VMIN 3.4
 #define VMAX 4.0  
 #define VDELTA 0.6
-#define BATT_CALC 0.01172352941
-#define SOLAR_CALC 0.0061652892561983
+//sensor1
+//#define BATT_CALC 0.01172352941
+//#define SOLAR_CALC 0.0061652892561983
+//sensor2
+#define BATT_CALC 0.1133714285714286
+#define SOLAR_CALC 0.1129428571428571
 
 #define BATTERY_READS 10
-#define BATTERY_SENSE A3
-#define SOLAR_SENSE A0
+//sensor1
+//#define BATTERY_SENSE A3
+//#define SOLAR_SENSE A0
+//sensor2
+#define BATTERY_SENSE A6
+#define SOLAR_SENSE A7
 
 //External Watchdog heartbeat
-#define PULSEPIN 3
+//sensor1
+//#define PULSEPIN 3
+//sensor2
+#define PULSEPIN 5
 //Soil Sensor VCC pin
 #define SOILVCCPIN 4
 //Enable Driver pin
@@ -88,7 +100,7 @@ RTC_DS3231 rtc;
 #define BAUD_RATE 115200
 
 //Cicles in between updates
-#define SECONDS_PER_CICLE 150
+#define SECONDS_PER_CICLE 120
 #define CICLES_PER_PRESENT 2880
 #define CICLES_PER_UPDATE 2
 
@@ -103,12 +115,14 @@ unsigned int BattValue, Batt, Battarray[BATTERY_READS], Battindex = 0, Battarray
 unsigned int Start1Min, Start1Hour, Start2Min, Start2Hour,_Start1Min, _Start1Hour, _Start2Min, _Start2Hour, WaterDuration, _WaterDuration, _SoilHumTarget, SoilHumTarget;
 int SleepTime;
 int radioRSSIarray[RSSI_READS], radioRSSIindex=0,radioRSSIarrayTotal=0,messagesFailed=0;
-int SoilHum;
 volatile int radioRSSI, isACKed = false, Manual_request = false, WateringOn = false;
 unsigned int nosend = CICLES_PER_UPDATE, i;
 unsigned int topresent = CICLES_PER_PRESENT;
 
-int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor;
+//seensor1
+//int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
+//sensor2
+int dryValue = 360, wetValue = 624, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
 
 boolean ack = true;
 boolean metric, timeReceived = false, Start1 = false, Start2 = false; 
@@ -177,41 +191,22 @@ void before()
   digitalWrite (UNSETPIN, LOW);
   StopDriver();
 
-  if (! rtc.begin()) {
-    Serial.println("Couldn't find RTC");
-    while (1);
-  }
+  rtc.begin();
 }
 
 void setup()  
 {
   Serial.println("");
   //activate watchdog timer
-  wdt_enable(WDTO_8S);
+  //wdt_enable(WDTO_8S);
   
 //  metric = getConfig().isMetric;
   metric = true;
   Serial.print(F("Metric: "));
   Serial.println(metric);
 
-  if (rtc.lostPower()) {
-    Serial.println(F("RTC lost power, requesting time!"));
-    i=0;
-    while (timeReceived != true) {
-      Serial.println(F("Requesting Time"));
-      //request time
-      requestTime(); 
-      heartbeat ();
-      wait(5000);
-      if (i>4) {
-        break;
-      } else {
-        i++;
-      }
-    }  
-  }
-  Serial.println(F("Reading Time ftom RTC"));
-  now = rtc.now();
+  getTime ();
+
   programTime = now;
   PrintTime (now); 
 
@@ -225,6 +220,32 @@ void setup()
   water_unset = now;
 } 
 
+//Makes sure that the time is updated
+void getTime () {
+  if (!HAS_RTC || rtc.lostPower()) {
+    Serial.println(F("RTC lost power/not present, requesting time!"));
+    i=0;
+    timeReceived=false;
+    while (timeReceived != true) {
+      Serial.println(F("Requesting Time"));
+      //request time
+      requestTime(); 
+      heartbeat ();
+      wait(2000);
+      Serial.print(F("."));
+      if (i>10) {
+        break;
+      } else {
+        i++;
+      }
+    }
+    if (HAS_RTC) {
+      Serial.println(F("Reading Time from RTC"));
+      now = rtc.now();
+    } 
+  }
+}
+
 void presentation ()
 {
   gwPresent ();
@@ -234,8 +255,8 @@ void loop()
 {
   //request for commands queuing during sleep
   smartSleep(2000);
-
-  now = rtc.now();
+  
+  getTime ();
   
   heartbeat();
   //check if it should reboot itself
@@ -364,17 +385,17 @@ void Watering () {
     Start1 = true;
     water_unset = now + TimeSpan (0,0,WaterDuration,0);
     WaterStart ();      
-  } else {
-    DateTime programTime ( now.year(), now.month(), now.day(), Start2Hour, Start2Min, 0);
-    if (now.secondstime() > programTime.secondstime()) {
-      Start2 = false;
-    }
-    if ((now.secondstime()+SleepTime > programTime.secondstime()) && (now.secondstime() < programTime.secondstime()) && (WateringOn == false) && (Start2 == false)) {
-      Serial.println(F("Program 2 watering start"));
-      Start2 = true;
-      water_unset = now + TimeSpan (0,0,WaterDuration,0);
-      WaterStart ();      
-    }
+  }
+
+  DateTime programTime2 ( now.year(), now.month(), now.day(), Start2Hour, Start2Min, 0);
+  if (now.secondstime() > programTime2.secondstime()) {
+    Start2 = false;
+  }
+  if ((now.secondstime()+SleepTime > programTime2.secondstime()) && (now.secondstime() < programTime2.secondstime()) && (WateringOn == false) && (Start2 == false)) {
+    Serial.println(F("Program 2 watering start"));
+    Start2 = true;
+    water_unset = now + TimeSpan (0,0,WaterDuration,0);
+    WaterStart ();
   }
 }
 
@@ -384,7 +405,7 @@ void wake_sensors () {
   Serial.println(F("waking sensor"));
   pinMode(SOILVCCPIN, OUTPUT);
   digitalWrite (SOILVCCPIN, HIGH);
-  sleep(100);
+  wdsleep(500);
   sensor.begin(); // reset sensor
   wdsleep(1000);    // give some time to boot up  
 }
@@ -707,8 +728,13 @@ void receive (const MyMessage &message) {
 }
 
 void receiveTime(unsigned long time) {
-  rtc.adjust(time);
-  Serial.println(F("Time Received, RTC updated"));
+  if (HAS_RTC) {
+    rtc.adjust(time);
+    Serial.println(F("Time Received, RTC updated"));
+  } else {
+    now=time;
+    Serial.println(F("Time Received, internal clock updated"));
+  }
   timeReceived = true;
 }
 
