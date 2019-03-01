@@ -100,9 +100,9 @@ RTC_DS3231 rtc;
 #define BAUD_RATE 115200
 
 //Cicles in between updates
-#define SECONDS_PER_CICLE 60
+#define SECONDS_PER_CICLE 90
 #define CICLES_PER_PRESENT 2880
-#define CICLES_PER_UPDATE 5
+#define CICLES_PER_UPDATE 3
 
 //Transmit Retries
 #define HIGH_PRIORITY_RETRIES 10
@@ -125,11 +125,11 @@ unsigned int topresent = CICLES_PER_PRESENT;
 int dryValue = 360, wetValue = 624, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
 
 boolean ack = true;
-boolean metric, timeReceived = false, Start1 = false, Start2 = false; 
+boolean metric, timeReceived = false; 
 char StartTime[MAX_MESSAGE_LENGTH];
 char WaterTime[MAX_MESSAGE_LENGTH];
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-DateTime now,oldnow,water_unset;
+DateTime now,water_unset;
 
 unsigned long cicles=0;
 
@@ -243,8 +243,6 @@ void getTime () {
       now = rtc.now();
     } 
   }
-  //initialize old time
-  oldnow = now;
 }
 
 void presentation ()
@@ -254,20 +252,15 @@ void presentation ()
 
 void loop() 
 {
-  //request for commands queuing during sleep
-  heartbeat();
-  sleep((MY_SMART_SLEEP_WAIT_DURATION_MS+1),true);
-  heartbeat();
-  
   getTime ();
   
   heartbeat();
-  //check if it should reboot itself
-  if ((now.hour() == 2) && (cicles > 12)) {
-    Serial.println(F("Reboot hour reached (2)"));
-    asm volatile ( "jmp 0");
-    wait(100);
-  }
+//  //check if it should reboot itself
+//  if ((now.hour() == 2) && (cicles > 12)) {
+//    Serial.println(F("Reboot hour reached (2)"));
+//    asm volatile ( "jmp 0");
+//    wait(100);
+//  }
 
   //detects end of watering
   Serial.println(F("Time now"));
@@ -280,7 +273,7 @@ void loop()
 
   //check if water time has passed
   if ((water_unset.secondstime() < now.secondstime()) && (WateringOn == true)) {
-    Serial.println(F("Watering time elapsed"));
+    Serial.println(F("-->Watering time elapsed"));
     Manual_request = false;
     WaterStop();
   }
@@ -302,7 +295,6 @@ void loop()
   Serial.print(F("Waiting in cicle "));
   //displays the current cicle count
   Serial.println(cicles);
-  oldnow = now;
   wdsleep((long)SleepTime*1000);
 } 
 
@@ -351,56 +343,43 @@ void WaterStart () {
   StopDriver();
 }
 
+void CheckProgram (int id, int Hour, int Min){
+  DateTime programTime ( now.year(), now.month(), now.day(), Hour, Min ,0);
+
+  //cheks to see if the program time will be exceeded during the next sleep
+  //checks if the watering is activated
+  //checks if the soil humidity exceeds the threshold
+  //Soil humidity does not exceed the threshold
+  if ((now.secondstime()+SleepTime > programTime.secondstime()) && (now.secondstime() < programTime.secondstime()) && (!WateringOn) && (SoilHum <= SoilHumTarget)) {
+    //activating watering
+    WaterStart (); 
+    Serial.print(F("-->Program "));
+    Serial.print(id);
+    Serial.println(F(" watering start"));
+    water_unset = now + TimeSpan (0,0,WaterDuration,0);
+    Serial.println(F("-->until"));
+    PrintTime (water_unset);
+  }
+}
 
 void Watering () {
 
   readSoil (); //Read water content
-  if ((SoilHum > SoilHumTarget) && (Manual_request == false)) {
-    Serial.println(F("Soil Humidity Excedeed"));
-    //checks soil humidity if watering, so it can be stoped if excedeed
-    if (WateringOn == true) {
-      WaterStop();
-    }
-    return;
-  }
+
+  Serial.print(F("WateringOn "));
+  Serial.println(WateringOn);
+  
   //checks if the water is off but there is a manual start request
   if ((Manual_request == true) && (WateringOn == false)) {
-    Serial.println(F("Manual watering start until"));
+    Serial.println(F("-->Manual watering start"));
     water_unset = now + TimeSpan (0,0,WaterDuration,0);
+    Serial.println(F("-->until"));
     PrintTime (water_unset);
     WaterStart ();  
   }
 
-  Serial.print(F("WateringOn "));
-  Serial.println(WateringOn);
-  Serial.print(F("Start1 "));
-  Serial.println(Start1);
-  Serial.print(F("Start2 "));
-  Serial.println(Start2);
-
-  //checks if the first start time has passed
-  if ((now.hour() >= Start1Hour) && (now.minute() >= Start1Min) && (Start1 == false) && (SoilHum <= SoilHumTarget)) {
-    Serial.println(F("Program 1 watering start"));
-    Start1 = true;
-    water_unset = now + TimeSpan (0,0,WaterDuration,0);
-    PrintTime (water_unset);
-    WaterStart ();      
-  }
-
-  //checks if the second start time has passed
-  if ((now.hour() >= Start2Hour) && (now.minute() >= Start2Min) && (Start2 == false) && (SoilHum <= SoilHumTarget)) {
-    Serial.println(F("Program 2 watering start until"));
-    Start2 = true;
-    water_unset = now + TimeSpan (0,0,WaterDuration,0);
-    PrintTime (water_unset);
-    WaterStart ();      
-  }
-
-  //the day changed, reset timers
-  if (now.day() != oldnow.day()) {
-    Start1 = false;
-    Start2 = false;
-  }
+  CheckProgram (1,Start1Hour,Start1Min);
+  CheckProgram (2,Start2Hour,Start2Min);
 }
 
 
@@ -697,16 +676,6 @@ void receive (const MyMessage &message) {
         Start2Hour = _Start2Hour;
         Start1Min = _Start1Min;
         Start2Min = _Start2Min;
-        if ((now.hour() >= Start1Hour) && (now.minute() >= Start1Min)) {
-          Start1 = true;
-        } else {
-          Start1 = false;
-        }
-        if ((now.hour() >= Start2Hour) && (now.minute() >= Start2Min)) {
-          Start2 = true;
-        } else {
-          Start2 = false;
-        }
       } else {
         Serial.println(F("Received incorrect watering start format"));
       }
