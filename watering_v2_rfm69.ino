@@ -6,7 +6,9 @@
 
 // Enable debug prints to serial monitor
 //#define MY_DEBUG 
-#define MY_SMART_SLEEP_WAIT_DURATION_MS 10000
+#define MY_SMART_SLEEP_WAIT_DURATION_MS 8000
+
+#define SENSOR 1  
 
 // Enable and select radio type attached
 //#define MY_RADIO_NRF24
@@ -26,14 +28,13 @@
 
 I2CSoilMoistureSensor sensor;
 RTC_DS3231 rtc;
-#define HAS_RTC false
 
 #define LED_POWERUP_COUNT 6
 #define LED_DELAY 200
 
 //Sketch information
 #define SKETCH_INFO       "Watering controller"
-#define SKETCH_VERSION    "0.1"
+#define SKETCH_VERSION    "0.99"
 #define SOIL_ID_INFO      "Soil Water Content"
 #define SOIL_ID 0
 #define TEMP_ID_INFO      "Ground Sensor Temperature"
@@ -57,25 +58,38 @@ RTC_DS3231 rtc;
 #define VMIN 3.4
 #define VMAX 4.0  
 #define VDELTA 0.6
+#if (SENSOR == 1)
 //sensor1
-//#define BATT_CALC 0.01172352941
-//#define SOLAR_CALC 0.0061652892561983
+#define BATT_CALC 0.01172352941
+#define SOLAR_CALC 0.0061652892561983
+#define BATTERY_SENSE A3
+#define SOLAR_SENSE A0
+//External Watchdog heartbeat
+#define PULSEPIN 3
+//Soil Sensor VCC pin
+#define SOILVCCPIN 4
+//Enable Driver pin
+#define DRIVERPIN 6
+//Set pin
+#define SETPIN 7
+//Unset pin
+#define UNSETPIN 8
+//seensor1
+//int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
+#define HAS_RTC true
+//Sensor calibrations
+#define DRYVALUE 373
+#define WETVALUE 675
+#define FRIENDLYDRYVALUE 0
+#define FRIENDLYWETVALUE 100
+
+#elif (SENSOR == 2)
 //sensor2
 #define BATT_CALC 0.1154285714285714
 #define SOLAR_CALC 0.1129268292682927
-
-#define BATTERY_READS 10
-//sensor1
-//#define BATTERY_SENSE A3
-//#define SOLAR_SENSE A0
-//sensor2
 #define BATTERY_SENSE A6
 #define SOLAR_SENSE A7
-
 //External Watchdog heartbeat
-//sensor1
-//#define PULSEPIN 3
-//sensor2
 #define PULSEPIN 5
 //Soil Sensor VCC pin
 #define SOILVCCPIN 4
@@ -85,6 +99,17 @@ RTC_DS3231 rtc;
 #define SETPIN 7
 //Unset pin
 #define UNSETPIN 8
+
+#define HAS_RTC false
+//Sensor calibrations
+#define DRYVALUE 360
+#define WETVALUE 624
+#define FRIENDLYDRYVALUE 0
+#define FRIENDLYWETVALUE 100
+
+#endif
+
+#define BATTERY_READS 10
 
 //Auto-reset
 #define MESSAGES_FAILED_REBOOT 20
@@ -112,17 +137,14 @@ RTC_DS3231 rtc;
 float lastTemperature=-127,temperature=-127,deltatemp,radioTemperature;
 float Sbatt, Vbatt, CurrValue, current;
 unsigned int BattValue, Batt, Battarray[BATTERY_READS], Battindex = 0, BattarrayTotal = 0;
-int Start1Min, Start1Hour, Start2Min, Start2Hour,_Start1Min, _Start1Hour, _Start2Min, _Start2Hour, WaterDuration, _WaterDuration, _SoilHumTarget, SoilHumTarget;
+int Start1Min, Start1Hour, Start2Min, Start2Hour,_Start1Min, _Start1Hour, _Start2Min, _Start2Hour, WaterDuration, _WaterDuration, _SoilHumTarget, SoilHumTarget, WateringConfig, DurationConfig;
 int SleepTime;
 int radioRSSIarray[RSSI_READS], radioRSSIindex=0,radioRSSIarrayTotal=0,messagesFailed=0;
 volatile int radioRSSI, isACKed = false, Manual_request = false, WateringOn = false;
 unsigned int nosend = CICLES_PER_UPDATE, i;
 unsigned int topresent = CICLES_PER_PRESENT;
 
-//seensor1
-//int dryValue = 373, wetValue = 675, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
-//sensor2
-int dryValue = 360, wetValue = 624, friendlyDryValue = 0, friendlyWetValue = 100, rawSensor, SoilHum;
+int rawSensor, SoilHum;
 
 boolean ack = true;
 boolean metric, timeReceived = false; 
@@ -187,7 +209,7 @@ void before()
   StartDriver();
   Serial.println(F("Unset Water Relay"));
   digitalWrite (UNSETPIN, HIGH);
-  wait (400);
+  wdsleep (400);
   digitalWrite (UNSETPIN, LOW);
   StopDriver();
 
@@ -209,11 +231,17 @@ void setup()
 
   PrintTime (now); 
 
-  Serial.println(F("Requesting Watering details"));  
-  request(WATERING_ID, V_TEXT, 0);
-  wait (5000);
-  request(DURATION_ID, V_TEXT, 0);
-  wait (500);
+  WateringConfig = DurationConfig = false;
+  while (WateringConfig == false) {
+    Serial.println(F("Requesting Watering details"));  
+    request(WATERING_ID, V_TEXT, 0);
+    wait (6000);
+  }
+  while (DurationConfig == false) {
+    Serial.println(F("Requesting Duration details"));  
+    request(DURATION_ID, V_TEXT, 0);
+    wait (6000);
+  }
 
   //configures water unset
   water_unset = now;
@@ -230,7 +258,7 @@ void getTime () {
       //request time
       requestTime(); 
       heartbeat ();
-      wait(2000);
+      wait(1000);
       Serial.print(F("."));
       if (i>10) {
         break;
@@ -238,11 +266,11 @@ void getTime () {
         i++;
       }
     }
-    if (HAS_RTC) {
-      Serial.println(F("Reading Time from RTC"));
-      now = rtc.now();
-    } 
   }
+  if (HAS_RTC) {
+    Serial.println(F("Reading Time from RTC"));
+    now = rtc.now();
+  } 
 }
 
 void presentation ()
@@ -301,7 +329,7 @@ void loop()
 void StartDriver () {
   Serial.println(F("Starting 12v driver"));
   digitalWrite (DRIVERPIN, HIGH);
-  wait (2000);
+  sleep (2000);
 }
 void StopDriver () {
   Serial.println(F("Stopping 12v driver"));
@@ -318,6 +346,7 @@ void StartWatering () {
 void StopWatering () {
   Serial.println(F("Unset Water Relay"));
   resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(false),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  wait (400);
   digitalWrite (UNSETPIN, HIGH);
   WateringOn = false;
   wait (400);
@@ -328,14 +357,14 @@ void WaterStop () {
   StartDriver();
   StopWatering();
   StopDriver();
-  Serial.println(F("Watering Stop"));
+  Serial.println(F("** Watering Stop **"));
   //Change SleepTime to original
   SleepTime = SECONDS_PER_CICLE;
 
 }
 
 void WaterStart () {
-  Serial.println(F("Watering Start"));
+  Serial.println(F("** Watering Start **"));
   //Change SleepTime to 30 seconds
   SleepTime = 30;
   StartDriver ();
@@ -388,9 +417,9 @@ void wake_sensors () {
   Serial.println(F("waking sensor"));
   pinMode(SOILVCCPIN, OUTPUT);
   digitalWrite (SOILVCCPIN, HIGH);
-  wait(500);
+  sleep(500);
   sensor.begin(); // reset sensor
-  wait(1000);    // give some time to boot up  
+  sleep(1000);    // give some time to boot up  
 }
 
 void sleep_sensors () {
@@ -411,7 +440,7 @@ void readSoil () {
   Serial.print("Soil Moisture Capacitance: ");
   rawSensor = sensor.getCapacitance();
   rawSensor = sensor.getCapacitance();
-  SoilHum = map(rawSensor, dryValue, wetValue, friendlyDryValue, friendlyWetValue);
+  SoilHum = map(rawSensor, DRYVALUE, WETVALUE, FRIENDLYDRYVALUE, FRIENDLYWETVALUE);
   Serial.print(rawSensor);
   Serial.print(" Soil Moisture Percentage: ");
   Serial.print(SoilHum);
@@ -654,6 +683,7 @@ void receive (const MyMessage &message) {
     isACKed = true;
   } else {
     if (message.sensor == WATERING_ID) {
+      WateringConfig = true;
       strncpy(StartTime, message.data, MAX_MESSAGE_LENGTH);
       char* token = strtok(StartTime, ":");
       _Start1Hour = atoi(token);
@@ -680,6 +710,7 @@ void receive (const MyMessage &message) {
         Serial.println(F("Received incorrect watering start format"));
       }
     } else if (message.sensor == DURATION_ID) {
+      DurationConfig = true;
       strncpy(WaterTime, message.data, MAX_MESSAGE_LENGTH);
       char* token = strtok(WaterTime, ":");
       _WaterDuration = atoi(token);
@@ -732,16 +763,16 @@ void wdsleep(unsigned long ms) {
   #else
     heartbeat();
     if (ms > MY_SMART_SLEEP_WAIT_DURATION_MS) {
-      Serial.print(F("Starting sleep "));
+      Serial.print(F("Starting long sleep "));
       Serial.println(ms);
       ms-=MY_SMART_SLEEP_WAIT_DURATION_MS;
       sleep(ms,true);
       //wait(ms);
-      Serial.println(F("Ending sleep"));
+      Serial.println(F("Ending log sleep"));
       //wait(ms);
       heartbeat();
     } else {
-      wait (ms);
+      sleep (ms);
       heartbeat();
     }
   #endif
