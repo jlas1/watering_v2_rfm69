@@ -6,7 +6,7 @@
 
 // Enable debug prints to serial monitor
 //#define MY_DEBUG 
-#define MY_SMART_SLEEP_WAIT_DURATION_MS 8000
+#define MY_SMART_SLEEP_WAIT_DURATION_MS 10000
 
 #define SENSOR 1  
 
@@ -151,7 +151,7 @@ boolean metric, timeReceived = false;
 char StartTime[MAX_MESSAGE_LENGTH];
 char WaterTime[MAX_MESSAGE_LENGTH];
 char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-DateTime now,water_unset;
+DateTime now,previously,water_unset;
 
 unsigned long cicles=0;
 
@@ -245,6 +245,8 @@ void setup()
 
   //configures water unset
   water_unset = now;
+  //initializes previously date
+  previously = now;
 } 
 
 //Makes sure that the time is updated
@@ -281,14 +283,15 @@ void presentation ()
 void loop() 
 {
   getTime ();
+
+  //check if it should reboot itself
+  if (previously.day() != now.day()) {
+    Serial.println(F("Reboot hour reached (0)"));
+    asm volatile ( "jmp 0");
+    wait(100);
+  }
   
   heartbeat();
-//  //check if it should reboot itself
-//  if ((now.hour() == 2) && (cicles > 12)) {
-//    Serial.println(F("Reboot hour reached (2)"));
-//    asm volatile ( "jmp 0");
-//    wait(100);
-//  }
 
   //detects end of watering
   Serial.println(F("Time now"));
@@ -324,6 +327,9 @@ void loop()
   //displays the current cicle count
   Serial.println(cicles);
   wdsleep((long)SleepTime*1000);
+  //update previously date
+  previously = now;
+
 } 
 
 void StartDriver () {
@@ -345,7 +351,6 @@ void StartWatering () {
 }
 void StopWatering () {
   Serial.println(F("Unset Water Relay"));
-  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(false),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   wait (400);
   digitalWrite (UNSETPIN, HIGH);
   WateringOn = false;
@@ -354,6 +359,7 @@ void StopWatering () {
 }
 
 void WaterStop () {
+  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(false),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   StartDriver();
   StopWatering();
   StopDriver();
@@ -379,7 +385,8 @@ void CheckProgram (int id, int Hour, int Min){
   //checks if the watering is activated
   //checks if the soil humidity exceeds the threshold
   //Soil humidity does not exceed the threshold
-  if ((now.secondstime()+SleepTime > programTime.secondstime()) && (now.secondstime() < programTime.secondstime()) && (!WateringOn) && (SoilHum <= SoilHumTarget)) {
+  if ((now.secondstime() > programTime.secondstime()) && ((now.secondstime() < programTime.secondstime()+SleepTime) ||
+  (now.secondstime() < programTime.secondstime()+WaterDuration*60) ) && (!WateringOn) && (SoilHum <= SoilHumTarget)) {
     //activating watering
     WaterStart (); 
     Serial.print(F("-->Program "));
@@ -562,6 +569,7 @@ void sendValues () {
   resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(WateringOn),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
   sendBatteryLevel(Batt, ack);
   resend(message.setSensor(RADIOTEMP_ID).setType(V_TEMP).set(radioTemperature,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
   resend(message.setSensor(RSSI_ID).setType(V_VOLTAGE).set(radioRSSI,0),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
