@@ -5,17 +5,17 @@
  */
 
 // Enable debug prints to serial monitor
-//#define MY_DEBUG 
-#define MY_SMART_SLEEP_WAIT_DURATION_MS 10000
+#define MY_DEBUG 
+#define MY_SMART_SLEEP_WAIT_DURATION_MS 5000
 
-#define SENSOR 1  
+#define SENSOR 2  
 
 // Enable and select radio type attached
 //#define MY_RADIO_NRF24
 #define MY_RADIO_RFM69
 //#define MY_IS_RFM69HW
 //#define MY_REPEATER_FEATURE
-//#define MY_NODE_ID 2
+//#define MY_NODE_ID 4
 //#define MY_RFM69_ATC_MODE_DISABLED
 //#define MY_RFM69_TX_POWER_DBM 20
 
@@ -34,7 +34,7 @@ RTC_DS3231 rtc;
 
 //Sketch information
 #define SKETCH_INFO       "Watering controller"
-#define SKETCH_VERSION    "0.99"
+#define SKETCH_VERSION    "1.0"
 #define SOIL_ID_INFO      "Soil Water Content"
 #define SOIL_ID 0
 #define TEMP_ID_INFO      "Ground Sensor Temperature"
@@ -55,13 +55,13 @@ RTC_DS3231 rtc;
 #define MANUAL_ID 8
 
 //for 1xli-ion
-#define VMIN 3.4
+#define VMIN 3.2
 #define VMAX 4.0  
-#define VDELTA 0.6
+#define VDELTA 0.8
 #if (SENSOR == 1)
 //sensor1
-#define BATT_CALC 0.01172352941
-#define SOLAR_CALC 0.0061652892561983
+#define BATT_CALC 0.0057960893854749
+#define SOLAR_CALC 0.0118826405867971
 #define BATTERY_SENSE A3
 #define SOLAR_SENSE A0
 //External Watchdog heartbeat
@@ -111,27 +111,16 @@ RTC_DS3231 rtc;
 
 #define BATTERY_READS 10
 
-//Auto-reset
-#define MESSAGES_FAILED_REBOOT 20
-#define CICLES_REBOOT 2880
-
 //RSSI calculations
 #define RSSI_READS 3
-
-//Configurable ACK Timeout
-#define ACK_TIMEOUT 4000
 
 //BAUD RATE
 #define BAUD_RATE 115200
 
 //Cicles in between updates
 #define SECONDS_PER_CICLE 90
-#define CICLES_PER_PRESENT 2880
 #define CICLES_PER_UPDATE 3
 
-//Transmit Retries
-#define HIGH_PRIORITY_RETRIES 10
-#define LOW_PRIORITY_RETRIES 2
 
 
 float lastTemperature=-127,temperature=-127,deltatemp,radioTemperature;
@@ -142,7 +131,6 @@ int SleepTime;
 int radioRSSIarray[RSSI_READS], radioRSSIindex=0,radioRSSIarrayTotal=0,messagesFailed=0;
 volatile int radioRSSI, isACKed = false, Manual_request = false, WateringOn = false;
 unsigned int nosend = CICLES_PER_UPDATE, i;
-unsigned int topresent = CICLES_PER_PRESENT;
 
 int rawSensor, SoilHum;
 
@@ -206,13 +194,6 @@ void before()
     radioRSSIarray[i] = 0;
   }
 
-  StartDriver();
-  Serial.println(F("Unset Water Relay"));
-  digitalWrite (UNSETPIN, HIGH);
-  wdsleep (400);
-  digitalWrite (UNSETPIN, LOW);
-  StopDriver();
-
   rtc.begin();
 }
 
@@ -220,7 +201,14 @@ void setup()
 {
   Serial.println("");
   //activate watchdog timer
-  //wdt_enable(WDTO_8S);
+  wdt_enable(WDTO_8S);
+
+  StartDriver();
+  Serial.println(F("Unset Water Relay"));
+  digitalWrite (UNSETPIN, HIGH);
+  wdsleep (400);
+  digitalWrite (UNSETPIN, LOW);
+  StopDriver();
   
 //  metric = getConfig().isMetric;
   metric = true;
@@ -335,7 +323,7 @@ void loop()
 void StartDriver () {
   Serial.println(F("Starting 12v driver"));
   digitalWrite (DRIVERPIN, HIGH);
-  sleep (2000);
+  wait (2000);
 }
 void StopDriver () {
   Serial.println(F("Stopping 12v driver"));
@@ -343,7 +331,7 @@ void StopDriver () {
 }
 void StartWatering () {
   Serial.println(F("Set Water Relay"));
-  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(true),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  send(message.setSensor(MANUAL_ID).setType(V_ARMED).set(true),true);
   digitalWrite (SETPIN, HIGH);
   WateringOn = true;
   wait (800);
@@ -359,7 +347,7 @@ void StopWatering () {
 }
 
 void WaterStop () {
-  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(false),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  send(message.setSensor(MANUAL_ID).setType(V_ARMED).set(false),true);
   StartDriver();
   StopWatering();
   StopDriver();
@@ -565,25 +553,18 @@ void sendValues () {
 
   //print debug message
   Serial.println(F("Sending Values"));
-  resend(message.setSensor(SOIL_ID).setType(V_HUM).set(SoilHum,0),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  resend(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  resend(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  resend(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  resend(message.setSensor(MANUAL_ID).setType(V_ARMED).set(WateringOn),HIGH_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  send(message.setSensor(SOIL_ID).setType(V_HUM).set(SoilHum,0),true);
+  send(message.setSensor(TEMP_ID).setType(V_TEMP).set(temperature,3),true);
+  send(message.setSensor(BVOLT_ID).setType(V_VOLTAGE).set(Vbatt,3),true);
+  send(message.setSensor(SVOLT_ID).setType(V_VOLTAGE).set(Sbatt,3),true);
+  send(message.setSensor(MANUAL_ID).setType(V_ARMED).set(WateringOn),true);
   sendBatteryLevel(Batt, ack);
-  resend(message.setSensor(RADIOTEMP_ID).setType(V_TEMP).set(radioTemperature,3),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
-  resend(message.setSensor(RSSI_ID).setType(V_VOLTAGE).set(radioRSSI,0),LOW_PRIORITY_RETRIES ,ACK_TIMEOUT);
+  send(message.setSensor(RADIOTEMP_ID).setType(V_TEMP).set(radioTemperature,3),true);
+  send(message.setSensor(RSSI_ID).setType(V_VOLTAGE).set(radioRSSI,0),true);
 }
 
 void gwPresent () {
-  //present at beggining and every day
-  if (topresent < CICLES_PER_PRESENT) {
-    topresent++;
-    return;
-  }
   Serial.println(F("Presenting"));
-  //reset count;
-  topresent = 0;
 
   sendSketchInfo(SKETCH_INFO, SKETCH_VERSION);
   wait(1000);
@@ -617,39 +598,6 @@ void gwPresent () {
   heartbeat();  
 
 }
-
-
-void resend(MyMessage &msg, int repeats, int timeout)
-{
-  int repeat = 0;
-  int repeatdelay = 0;
-  boolean sendOK = false;
-
-  while ((sendOK == false) and (repeat < repeats)) {
-    send(msg,true);
-
-    if (waitACK(timeout)) {
-      sendOK = true;
-      messagesFailed = 0;
-    } else {
-      sendOK = false;
-      Serial.print("Retry ");
-      Serial.print(repeat);
-      Serial.print(" Failed ");
-      Serial.println(messagesFailed);
-      repeatdelay += 500;
-      wdsleep(repeatdelay);
-    }
-    repeat++; 
-  }
-  if (sendOK == false) {
-    if (messagesFailed > MESSAGES_FAILED_REBOOT) {
-      asm volatile ( "jmp 0");
-    }
-    messagesFailed++;
-  }
-}
-
 
 boolean waitACK (int timeout) {
   unsigned long startTime = millis();
@@ -762,8 +710,8 @@ void receiveTime(unsigned long time) {
 }
 
 void wdsleep(unsigned long ms) {
-  unsigned long enter = hwMillis();
   #if defined(MY_REPEATER_FEATURE)
+  unsigned long enter = hwMillis();
   while (hwMillis() - enter < ms) {
     wait(98);
     heartbeat();
